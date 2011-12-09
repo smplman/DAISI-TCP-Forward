@@ -40,7 +40,42 @@ sub printlog {
 # A table of data consumers.  Input from clients attached to the feed
 # server will be broadcast to every consumer listed in this table.
 my %clients;
-my %feed;
+
+# The feed server.  Whatever is sent to this server will be broadcast
+# to every consumer.
+POE::Component::Server::TCP->new(
+  Port => FEED_SERVER_PORT,
+
+  # A server error occurred.  Perform a graceless stop.
+  Error => sub {
+    my ($syscall, $error_number, $error_message) = @_[ARG0 .. ARG2];
+    die("Couldn't start feed server: ",
+      "$syscall error $error_number: $error_message");
+  },
+
+  # Log that a client has connected to the feed server.
+  ClientConnected => sub {
+    my $client_id = $_[SESSION]->ID();
+    printlog("Feed connection $client_id started.");
+  },
+
+  # Log that a client has disconnected from the feed server.
+  ClientDisconnected => sub {
+    my $client_id = $_[SESSION]->ID();
+    printlog("Feed connection $client_id stopped.");
+  },
+
+  # Broadcast all feed input to any data consumers out there.  This
+  # posts a message to each client session, requesting that it send
+  # the input to its client socket.
+  ClientInput => sub {
+    my ($kernel, $input) = @_[KERNEL, ARG0];
+    foreach my $client_id (keys %clients) {
+      $kernel->post($client_id => send_message => $input);
+    }
+  },
+);
+
 # The consumer server.  Every consumer connection will receive what
 # was sent to each feed connection.
 POE::Component::Server::TCP->new(
@@ -59,51 +94,13 @@ POE::Component::Server::TCP->new(
     my $client_id = $_[SESSION]->ID();
     $clients{$client_id} = "alive";
     printlog("Consuming connection $client_id started.");
-    printlog("Feed server listening on port ",     FEED_SERVER_PORT);
-    
-    # The feed server.  Whatever is sent to this server will be broadcast
-    # to every consumer.
-    $feed{$client_id} = POE::Component::Server::TCP->new(
-      Port => FEED_SERVER_PORT,
-      # A server error occurred.  Perform a graceless stop.
-      Error => sub {
-        my ($syscall, $error_number, $error_message) = @_[ARG0 .. ARG2];
-        die("Couldn't start feed server: ",
-          "$syscall error $error_number: $error_message");
-      },
-
-      # Log that a client has connected to the feed server.
-      ClientConnected => sub {
-        my $client_id = $_[SESSION]->ID();
-        printlog("Feed connection $client_id started.");
-      },
-
-      # Log that a client has disconnected from the feed server.
-      ClientDisconnected => sub {
-        my $client_id = $_[SESSION]->ID();
-        printlog("Feed connection $client_id stopped.");
-      },
-
-      # Broadcast all feed input to any data consumers out there.  This
-      # posts a message to each client session, requesting that it send
-      # the input to its client socket.
-      ClientInput => sub {
-        my ($kernel, $input) = @_[KERNEL, ARG0];
-        foreach my $client_id (keys %clients) {
-          $kernel->post($client_id => send_message => $input);
-        }
-      },
-    );
   },
 
   # Remove departing connections from the clients table, and log
   # their disconnections.
   ClientDisconnected => sub {
-    my $heap = $_[HEAP];
     my $client_id = $_[SESSION]->ID();
-    delete $feed{$client_id};
     delete $clients{$client_id};
-    delete $heap->{feed};
     printlog("Consuming connection $client_id stopped.");
   },
 
@@ -125,7 +122,7 @@ POE::Component::Server::TCP->new(
 );
 
 # Run the servers until something stops them.
-
+printlog("Feed server listening on port ",     FEED_SERVER_PORT);
 printlog("Consumer server listening on port ", CONSUMER_SERVER_PORT);
 $poe_kernel->run();
 exit 0;

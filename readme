@@ -1,0 +1,2 @@
+This is a simple project that uses Perl POE sockets to forward commands from a web site to a GSM module over the internet. 
+Credit for the Perl server goes to the POE:Cookbook http://poe.perl.org/?POE_Cookbook/TCP_Forwarding. It has been modified for this specific use. 
